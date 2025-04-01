@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deepgram API Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        button {
+            padding: 10px 15px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        #transcript {
+            font-size: 24px;
+            font-weight: bold;
+            color: #d9534f; /* Bootstrap's danger red color */
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #f5f5f5;
+            border-radius: 4px;
+            text-align: center;
+        }
+        #result {
+            white-space: pre-wrap;
+            background-color: #f5f5f5;
+            padding: 15px;
+            border-radius: 4px;
+            min-height: 100px;
+            color: #d9534f; /* Bootstrap's danger red color */
+            font-weight: bold;
+        }
+        .error {
+            color: red;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Deepgram API Test</h1>
+        
+        <div>
+            <h2>1. Record Audio</h2>
+            <button id="recordButton">Start Recording</button>
+            <span id="recordingStatus"></span>
+        </div>
+        
+        <div>
+            <h2>2. Send to Deepgram API</h2>
+            <button id="sendButton" disabled>Send to Deepgram</button>
+        </div>
+        
+        <div>
+            <h2>3. Result</h2>
+            <div id="transcript">Transcribed text will appear here...</div>
+            <div id="result">Full JSON response will appear here...</div>
+        </div>
+    </div>
+
+    <script>
+        let mediaRecorder;
+        let audioChunks = [];
+        let audioBlob;
+        
+        const recordButton = document.getElementById('recordButton');
+        const sendButton = document.getElementById('sendButton');
+        const recordingStatus = document.getElementById('recordingStatus');
+        const resultDiv = document.getElementById('result');
+        const transcriptDiv = document.getElementById('transcript');
+        
+        // Record audio
+        recordButton.addEventListener('click', async () => {
+            try {
+                if (mediaRecorder && mediaRecorder.state === 'recording') {
+                    mediaRecorder.stop();
+                    recordButton.textContent = 'Start Recording';
+                    recordingStatus.textContent = 'Recording stopped';
+                    return;
+                }
+                
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                recordingStatus.textContent = 'Recording...';
+                recordButton.textContent = 'Stop Recording';
+                
+                mediaRecorder = new MediaRecorder(stream);
+                audioChunks = [];
+                
+                mediaRecorder.addEventListener('dataavailable', event => {
+                    audioChunks.push(event.data);
+                });
+                
+                mediaRecorder.addEventListener('stop', () => {
+                    audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                    sendButton.disabled = false;
+                });
+                
+                mediaRecorder.start();
+            } catch (error) {
+                console.error('Error accessing microphone:', error);
+                recordingStatus.textContent = `Error: ${error.message}`;
+                recordingStatus.classList.add('error');
+            }
+        });
+        
+        // Send to Deepgram API
+        sendButton.addEventListener('click', async () => {
+            if (!audioBlob) {
+                resultDiv.textContent = 'No audio recorded yet!';
+                resultDiv.classList.add('error');
+                return;
+            }
+            
+            resultDiv.textContent = 'Sending to Deepgram API...';
+            transcriptDiv.textContent = 'Processing...';
+            resultDiv.classList.remove('error');
+            
+            try {
+                // Try different model formats
+                const models = [
+                    '', // default
+                    '?model=nova-2-general&language=en',
+                    '?model=2-general-nova&language=en-US',
+                    '?model=nova&language=en'
+                ];
+                
+                let success = false;
+                
+                for (const modelParam of models) {
+                    try {
+                        const response = await fetch(`https://deepgram-dev.entratadev.green/v1/listen${modelParam}`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'audio/wav'
+                            },
+                            body: audioBlob
+                        });
+                        
+                        const data = await response.json();
+                        
+                        if (response.ok) {
+                            // Extract transcript from the response
+                            let transcript = "No transcript found";
+                            if (data.results && 
+                                data.results.channels && 
+                                data.results.channels.length > 0 && 
+                                data.results.channels[0].alternatives && 
+                                data.results.channels[0].alternatives.length > 0) {
+                                transcript = data.results.channels[0].alternatives[0].transcript;
+                            }
+                            
+                            // Display the transcript
+                            transcriptDiv.textContent = `"${transcript}"`;
+                            
+                            // Display the full JSON response
+                            resultDiv.textContent = `Success with model: ${modelParam || 'default'}\n\n${JSON.stringify(data, null, 2)}`;
+                            
+                            success = true;
+                            break;
+                        } else {
+                            console.log(`Failed with model: ${modelParam || 'default'}`, data);
+                        }
+                    } catch (modelError) {
+                        console.error(`Error with model ${modelParam}:`, modelError);
+                    }
+                }
+                
+                if (!success) {
+                    transcriptDiv.textContent = 'Transcription failed';
+                    resultDiv.textContent = 'Failed with all model formats. Check console for details.';
+                    resultDiv.classList.add('error');
+                }
+            } catch (error) {
+                console.error('Error sending to Deepgram:', error);
+                transcriptDiv.textContent = 'Error occurred';
+                resultDiv.textContent = `Error: ${error.message}`;
+                resultDiv.classList.add('error');
+            }
+        });
+    </script>
+</body>
+</html>
